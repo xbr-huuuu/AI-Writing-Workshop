@@ -84,6 +84,8 @@ python main.py report    # 看进化报告
 | `python main.py batch N` | 一口气写 N 章 | 想批量产出时 |
 | `python main.py report` | 看进化报告（评分趋势） | 随时 |
 | `python main.py stats` | 看知识库数据量 | 随时 |
+| `python show_analysis.py 红楼梦` | 查看某本书的分析报告 | 随时 |
+| `python show_analysis.py` | 浏览所有已分析书籍 | 随时 |
 | `python check_api.py` | 诊断 API 连接 | 遇到认证错误时 |
 
 ## 项目结构
@@ -94,6 +96,7 @@ python main.py report    # 看进化报告
 ├── config.py                    ← 配置 + 豆瓣 Top100 书目
 ├── workflow.py                  ← 核心引擎，编排整个写作流程
 ├── check_api.py                 ← API 连接诊断工具
+├── show_analysis.py             ← 查看豆瓣书籍分析报告
 ├── requirements.txt
 │
 ├── agents/                      ← 四个写作 Agent
