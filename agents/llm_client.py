@@ -1,5 +1,5 @@
 """
-LLM客户端 —— 统一封装 OpenAI / Anthropic 调用
+LLM客户端 —— 统一封装 DeepSeek / OpenAI / Anthropic 调用
 """
 import traceback
 from typing import Optional
@@ -7,7 +7,7 @@ from config import config
 
 
 class LLMClient:
-    """统一的大模型调用接口"""
+    """统一的大模型调用接口，优先使用 DeepSeek"""
 
     def __init__(self):
         self._openai_client = None
@@ -15,12 +15,17 @@ class LLMClient:
 
     @property
     def openai_client(self):
+        """OpenAI 兼容客户端（DeepSeek / OpenAI / 中转API 均走此通道）"""
         if self._openai_client is None:
             from openai import OpenAI
-            kwargs = {"api_key": config.openai_api_key}
+
+            # 优先使用 DeepSeek 配置
+            api_key = config.deepseek_api_key or config.openai_api_key
+            base_url = config.deepseek_base_url
             if config.openai_base_url:
-                kwargs["base_url"] = config.openai_base_url
-            self._openai_client = OpenAI(**kwargs)
+                base_url = config.openai_base_url  # 显式设置的 BASE_URL 优先级最高
+
+            self._openai_client = OpenAI(api_key=api_key, base_url=base_url)
         return self._openai_client
 
     @property

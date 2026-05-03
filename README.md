@@ -38,15 +38,50 @@ pip install -r requirements.txt
 
 ### 2. 配置API Key
 
+**方式一：环境变量（推荐，不泄露Key到文件）**
+
+**macOS / Linux / Git Bash：**
 ```bash
-# OpenAI
-export OPENAI_API_KEY="sk-..."
+export DEEPSEEK_API_KEY="sk-你的key"
+```
 
-# 或 Anthropic Claude
-export ANTHROPIC_API_KEY="sk-ant-..."
+**Windows PowerShell：**
+```powershell
+$env:DEEPSEEK_API_KEY = "sk-你的key"
+```
 
-# 可选：自定义API地址
-export OPENAI_BASE_URL="https://your-api-endpoint/v1"
+**Windows CMD：**
+```cmd
+set DEEPSEEK_API_KEY=sk-你的key
+```
+
+> **注意**：PowerShell 必须用 `$env:XXX` 语法，不能用 `set`（那是CMD的语法）。用错会导致 `os.getenv()` 读到空值，API调用返回 `Authentication Fails`。
+
+**永久生效（Windows）：** 开始菜单搜索"环境变量" → 新建用户变量 → 变量名 `DEEPSEEK_API_KEY` → 值填你的Key。
+
+**方式二：直接编辑 config.py**
+
+修改 `config.py` 第13行，将空字符串替换为你的Key：
+```python
+deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "sk-你的key")
+```
+
+**支持的其他API：**
+
+| 后端 | 环境变量 | 说明 |
+|------|----------|------|
+| DeepSeek（默认） | `DEEPSEEK_API_KEY` | 默认 base_url: `https://api.deepseek.com` |
+| OpenAI | `OPENAI_API_KEY` | 可选设置 `OPENAI_BASE_URL` |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | 模型名需含 "claude" |
+| 其他兼容接口 | `OPENAI_API_KEY` + `OPENAI_BASE_URL` | 如中转API、本地Ollama等 |
+
+**自定义模型名：**
+```bash
+# 如果默认的 deepseek-v4-pro 不可用，可覆盖
+export ARCHITECT_MODEL="deepseek-chat"
+export WRITER_MODEL="deepseek-chat"
+export CRITIC_MODEL="deepseek-chat"
+export REVISER_MODEL="deepseek-chat"
 ```
 
 ### 3. 分析豆瓣Top100书籍（首次使用）
@@ -80,9 +115,12 @@ python main.py stats
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `architect_model` | `claude-sonnet-4-6` | 架构师模型 |
-| `writer_model` | `claude-sonnet-4-6` | 作家模型 |
-| `critic_model` | `claude-sonnet-4-6` | 批评家模型 |
+| `deepseek_api_key` | `$DEEPSEEK_API_KEY` | DeepSeek API Key |
+| `deepseek_base_url` | `https://api.deepseek.com` | DeepSeek API地址 |
+| `architect_model` | `deepseek-v4-pro` | 架构师模型 |
+| `writer_model` | `deepseek-v4-pro` | 作家模型 |
+| `critic_model` | `deepseek-v4-pro` | 批评家模型 |
+| `reviser_model` | `deepseek-v4-pro` | 修订者模型 |
 | `max_chapter_words` | `4000` | 每章目标字数 |
 | `experience_retrieval_k` | `5` | 每次检索的经验条数 |
 | `top100_retrieval_k` | `3` | 每次检索的Top100参考数 |
@@ -114,6 +152,40 @@ python main.py stats
     ├── experience_log.py        # 经验日志系统
     └── dynamic_fewshot.py       # 动态Few-Shot检索
 ```
+
+## 故障排查
+
+### API 认证失败：`Authentication Fails (governor)`
+
+1. **先确认API Key有效**：运行诊断脚本
+   ```powershell
+   python check_api.py
+   ```
+   该脚本测试 4 种 base_url × model 组合，找出可用的配置。
+
+2. **检查环境变量**：执行以下命令确认Key是否被正确读取
+   ```powershell
+   python -c "import os; print(os.getenv('DEEPSEEK_API_KEY')[:15])"
+   ```
+   - 如果输出为空 → 环境变量未设置或语法错误
+   - PowerShell 用户：必须用 `$env:DEEPSEEK_API_KEY = "..."` 而非 `set`
+   - CMD 用户：必须用 `set DEEPSEEK_API_KEY=...` 而非 `$env:`
+
+3. **如果环境变量有效但仍失败**：可能 base_url 多了/少了 `/v1`
+   - 在 PowerShell 中测试：`$env:DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"` 或去掉 `/v1`
+
+4. **模型名不匹配**：部分 DeepSeek 账号的 `deepseek-v4-pro` 可能映射为 `deepseek-chat`，可用 `check_api.py` 验证。
+
+### ChromaDB 初始化失败
+
+ChromaDB 依赖 sqlite3，Windows 上极少数情况会缺。解决方法：
+```powershell
+pip install chromadb --upgrade
+```
+
+### 首次运行 `analyze` 极慢
+
+每分析一本书需调用一次LLM，10本书约 3-5 分钟。这是正常的，数据存入向量库后可以反复使用。
 
 ## License
 
