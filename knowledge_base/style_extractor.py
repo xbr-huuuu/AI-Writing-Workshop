@@ -20,11 +20,19 @@ def extract_text_stats(text: str) -> dict:
     sentence_lengths = [len(s) for s in sentences]
     paragraph_lengths = [len(p) for p in paragraphs]
 
-    dialogue_lines = len(re.findall(r'["""][^"""]+["'']', text))
+    # 匹配各种中文对话格式
+    dialogue_lines = 0
+    # 全角引号 "..."（中文最常见的对话标记）
+    dialogue_lines += len(re.findall(r'“[^”]+”', text))
+    # ASCII 引号 "..."
+    dialogue_lines += len(re.findall(r'"([^"]+)"', text))
+    # 方括号引号「...」『...』
     dialogue_lines += len(re.findall(r'「[^」]+」', text))
     dialogue_lines += len(re.findall(r'『[^』]+』', text))
+    # 对话引导词：××说："..." / ××道："..." / ××问："..."（不限引号类型）
+    dialogue_lines += len(re.findall(r'(说|道|问|答|喊|叫|吼|骂|答|回|问|嚷)[：:]\s*[""“「『]', text))
 
-    dialogue_ratio = dialogue_lines / len(sentences) if sentences else 0
+    dialogue_ratio = min(dialogue_lines / max(len(sentences), 1), 1.0)
 
     return {
         "total_chars": len(words),

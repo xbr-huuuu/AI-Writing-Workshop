@@ -13,7 +13,8 @@ from agents.critic import CriticAgent
 from agents.reviser import ReviserAgent
 from memory.experience_log import ExperienceLog
 from memory.dynamic_fewshot import fewshot, DynamicFewShot
-from memory.consistency_tracker import ConsistencyTracker  # v2
+from memory.consistency_tracker import ConsistencyTracker
+from memory.entity_tracker import EntityTracker
 
 
 class WritingWorkflow:
@@ -33,7 +34,8 @@ class WritingWorkflow:
         self.reviser = ReviserAgent()
         self.experience_log = ExperienceLog()
         self.fewshot_manager = fewshot
-        self.consistency = None  # v2：惰性初始化，load_novel 时赋值
+        self.consistency = None  # 惰性初始化，load_novel 时赋值
+        self.entity_tracker = None  # 实体注册表，load_novel 时赋值
 
         self.novel_title = ""
         self.novel_genre = ""
@@ -41,6 +43,7 @@ class WritingWorkflow:
         self.chapters = []
         self.current_chapter = 0
         self._novel_dir_path = ""  # load_novel 时记录，避免路径重建不一致
+        self._last_critique = {}   # 上一章批评家意见，喂给作家做改进
 
     # ==================== 初始化 ====================
 
@@ -105,12 +108,21 @@ class WritingWorkflow:
             self.chapters = valid
             self.current_chapter = len(self.chapters)
 
-        # v2：初始化一致性追踪器
+        # v2：初始化一致性追踪器 + 实体注册表
         self.consistency = ConsistencyTracker(novel_dir=novel_dir)
         self.consistency.load()
+        self.entity_tracker = EntityTracker(novel_dir=novel_dir)
+        self.entity_tracker.load()
+
+        # 回填：已有章节但实体库为空 → 自动从已有章节提取
+        if self.chapters and not self.entity_tracker.entities:
+            print("   📇 首次加载，正在回填已有章节的实体...")
+            self._backfill_entity_tracker()
 
         print(f"📂 已加载：《{self.novel_title}》")
         print(f"   已完成：{self.current_chapter} 章")
+        if self.entity_tracker and self.entity_tracker.entities:
+            print(f"   实体注册表：{len(self.entity_tracker.entities)} 个命名实体")
         if self.consistency:
             stats = self.consistency.stats()
             if stats["total"] > 0:
@@ -165,6 +177,15 @@ class WritingWorkflow:
 
         # STEP 2: 作家写作
         print(f"\n✍️  [2/5] 作家创作初稿...")
+        last_issues = self._last_critique.get("weaknesses", [])
+        if last_issues:
+            print(f"   📋 上章批评家意见已载入（{'、'.join(last_issues[:2])}）")
+        # 注入实体注册表上下文
+        entity_ctx = ""
+        if self.entity_tracker:
+            entity_ctx = self.entity_tracker.get_context_for_chapter(chapter_num, chapter_title)
+            if entity_ctx:
+                print(f"   📇 实体注册表已载入（{len(self.entity_tracker.entities)}个命名实体）")
         draft = self.writer.write_chapter(
             novel_title=self.novel_title,
             novel_genre=self.novel_genre,
@@ -172,6 +193,8 @@ class WritingWorkflow:
             chapter_title=chapter_title,
             architecture=architecture,
             previous_chapters_summary=previous_summary,
+            previous_critique=self._last_critique,
+            entity_context=entity_ctx,
         )
         content = draft["content"]
         word_count = len(content)
@@ -192,6 +215,7 @@ class WritingWorkflow:
             consistency_checklist=checklist,  # v2
         )
         score = critique.get("overall_score", "?")
+        self._last_critique = critique  # 存下来喂给下一章作家
         print(f"   ✓ 评审完成 —— 总分：{score}/10")
 
         # v2：将批评家发现的一致性问题喂入追踪器
@@ -251,6 +275,8 @@ class WritingWorkflow:
         self._save_chapters_meta()                  # 再更新元数据索引
         if self.consistency:
             self.consistency.save()
+        if self.entity_tracker:
+            self.entity_tracker.update_from_chapter(chapter_num, chapter_title, final_content)
 
         # 显示进化报告
         print(f"\n{self.experience_log.get_evolution_report()}")
@@ -347,6 +373,18 @@ class WritingWorkflow:
                     f.write(f"\n{'='*50}\n")
                     f.write(f"第{ch['number']}章 {ch['title']}（正文缺失）\n")
                     f.write(f"{'='*50}\n\n")
+
+    def _backfill_entity_tracker(self):
+        """回填已有章节的实体（首次加载时调用）"""
+        novel_dir = self._novel_dir()
+        for ch in self.chapters:
+            ch_num = ch["number"]
+            ch_title = ch.get("title", "")
+            filepath = os.path.join(novel_dir, f"chapter_{ch_num:03d}.txt")
+            if os.path.exists(filepath):
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.entity_tracker.update_from_chapter(ch_num, ch_title, content)
 
     def _track_foreshadowing(self, chapter_num: int, architecture: dict):
         """从架构设计中提取伏笔信息，喂入一致性追踪器"""

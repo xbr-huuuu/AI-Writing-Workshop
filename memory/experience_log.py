@@ -140,7 +140,7 @@ class ExperienceLog:
             cat = c.get("category", "其他")
             categories[cat] = categories.get(cat, 0) + 1
 
-        cat_str = " | ".join(f"{k}:{v}" for k, v in sorted(categories.items(), key=lambda x: -x[1]))
+        cat_lines = '\n'.join(f"║    {k}：{v} 条" for k, v in sorted(categories.items(), key=lambda x: -x[1]))
 
         return f"""
 ╔══════════════════════════════════╗
@@ -148,7 +148,9 @@ class ExperienceLog:
 ╠══════════════════════════════════╣
 ║  积累技法：{len(cards)} 条
 ║  平均评分：{sum(scores)/len(scores):.1f}/10（共{len(scores)}条有评分）
-║  技法分布：{cat_str}
+╠══════════════════════════════════╣
+║  技法分布：
+{cat_lines}
 ╚══════════════════════════════════╝
 """
 

@@ -22,10 +22,11 @@ class WriterAgent:
         chapter_title: str,
         architecture: dict,
         previous_chapters_summary: str,
+        previous_critique: dict = None,
+        entity_context: str = "",
     ) -> dict:
         """根据架构师的大纲写作一章（多维度检索，集百家之长）"""
 
-        # 分维度检索文风参考
         dim_queries = {
             "语言与描写": f"{novel_genre} 小说 语言风格 环境描写 意象 用词",
             "对话与人物": f"{novel_genre} 小说 对话写作 人物塑造 心理描写",
@@ -36,6 +37,21 @@ class WriterAgent:
         past_tips = store.search_experiences(f"{novel_genre} 写作技巧 描写 对话 节奏")
 
         system = self._build_writer_system(similar_books, past_tips, novel_title)
+
+        # 上章批评家反馈
+        critique_block = ""
+        if previous_critique and not previous_critique.get("parse_error"):
+            weaknesses = previous_critique.get("weaknesses", [])
+            score = previous_critique.get("overall_score", "?")
+            if weaknesses:
+                critique_block = f"""
+【上一章批评家反馈 —— 本章必须针对性改进】
+上章评分：{score}/10
+上章问题：
+{chr(10).join(f'  ✗ {w}' for w in weaknesses)}
+
+本章写作时请逐一避免上述问题。如果上章缺乏对话，本章必须有至少3段人物对话。如果上章人物扁平，本章要让人物在对话中展现性格冲突。
+"""
 
         user = f"""
 【写作任务】
@@ -48,9 +64,12 @@ class WriterAgent:
 【前情回顾】
 {previous_chapters_summary}
 
+【全书实体注册表（人名/地名/物品/组织）】
+{entity_context if entity_context else "（暂无）"}
+{critique_block}
 【写作要求】
 1. 严格遵循架构师的结构设计
-2. 融合上述各维度参考书的技法，博采众长
+2. 融合各维度参考书的技法，博采众长
 3. 目标字数：{config.max_chapter_words}字左右
 4. 在结尾处留下钩子，吸引读者继续阅读
 5. 直接输出小说正文，不需要任何前言或后记
