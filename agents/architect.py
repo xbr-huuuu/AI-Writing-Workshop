@@ -117,14 +117,18 @@ class ArchitectAgent:
         premise: str,
         total_chapters: int = 30,
     ) -> dict:
-        """设计整本小说的全局大纲"""
+        """设计整本小说的全局大纲（v2：含硬软约束）"""
         similar_books = store.search_similar_books(f"{novel_genre} 小说 整体结构 大纲")
         book_refs = self._format_book_refs(similar_books)
 
         system = f"""你是一位资深小说架构师。参考以下经典作品的结构技法：
 {book_refs}
 
-请为给定的小说创作前提设计完整的全局大纲。输出严格的JSON格式。"""
+请为给定的小说创作前提设计完整的全局大纲。输出严格的JSON格式。
+
+重要：请区分硬约束（不可变）和软约束（可动态调整）。
+- 硬约束：核心主题、角色最终命运、关键情节点——这些是故事的脊梁
+- 软约束：具体路径、次要角色关系、呈现方式——这些可以随着写作进化而调整"""
 
         user = f"""
 书名：《{novel_title}》
@@ -137,12 +141,22 @@ class ArchitectAgent:
   "novel_title": "{novel_title}",
   "genre": "{novel_genre}",
   "total_chapters": {total_chapters},
+  "hard_constraints": {{
+    "core_theme": "一句话核心主题（不可变）",
+    "character_fates": [{{"name": "...", "final_fate": "角色最终结局（不可变）"}}],
+    "key_milestones": ["不可变更的关键情节点1", "关键情节点2"]
+  }},
+  "soft_constraints": {{
+    "tone_flexibility": "风格可调整的空间",
+    "subplot_room": "支线可增删的范围",
+    "pacing_adjustments": "节奏可快可慢的段落"
+  }},
   "three_act_structure": {{
     "act1_setup": {{"chapters": "1-{total_chapters//4}", "goal": "..."}},
     "act2_confrontation": {{"chapters": "{total_chapters//4+1}-{3*total_chapters//4}", "goal": "..."}},
     "act3_resolution": {{"chapters": "{3*total_chapters//4+1}-{total_chapters}", "goal": "..."}}
   }},
-  "main_characters": [{{"name": "...", "arc": "..."}}],
+  "main_characters": [{{"name": "...", "arc": "...", "core_trait": "不可变的性格底色"}}],
   "chapters": [{{"number": 1, "title": "...", "synopsis": "...", "milestone": "..."}}]
 }}
 """
@@ -174,7 +188,6 @@ class ArchitectAgent:
 
     def _parse_response(self, response: str) -> dict:
         import json
-        # 尝试提取JSON块
         response = response.strip()
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0]
@@ -183,4 +196,5 @@ class ArchitectAgent:
         try:
             return json.loads(response)
         except json.JSONDecodeError:
+            print("  ⚠ 架构师：JSON解析失败，将使用原始文本（后续流程会降级处理）")
             return {"raw_response": response, "parse_error": True}

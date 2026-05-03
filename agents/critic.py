@@ -21,14 +21,23 @@ class CriticAgent:
         architecture: dict,
         novel_genre: str,
         style_fingerprint: dict,
+        consistency_checklist: str = "",
     ) -> dict:
-        """对一章的初稿进行评审"""
+        """对一章的初稿进行评审（v2：含一致性检查）"""
 
-        # 检索对标标准
         similar_books = store.search_similar_books(f"{novel_genre} 优秀写作标准 描写 节奏 对话")
         past_critiques = store.search_experiences(f"评审标准 {novel_genre}")
 
         system = self._build_critic_system(similar_books, past_critiques)
+
+        checklist_block = ""
+        if consistency_checklist:
+            checklist_block = f"""
+【全书一致性约束】
+{consistency_checklist}
+
+评审时请逐条核验：本章是否与上述伏笔和角色约束一致？
+"""
 
         user = f"""
 【评审对象】
@@ -37,7 +46,7 @@ class CriticAgent:
 
 【架构师的设计要求】
 {json.dumps(architecture, ensure_ascii=False, indent=2)[:800]}
-
+{checklist_block}
 【当前章节文风数据】
 - 总字数：{style_fingerprint.get('stats', {}).get('total_chars', '?')}
 - 平均句长：{style_fingerprint.get('stats', {}).get('avg_sentence_length', '?')}字
@@ -49,7 +58,7 @@ class CriticAgent:
 {chapter_content}
 ---
 
-请以JSON格式输出评审报告：
+请以JSON格式输出评审报告（specific_suggestions 按严重程度排序，最严重的排最前）：
 {{
   "overall_score": 8.5,
   "dimension_scores": {{
@@ -58,20 +67,23 @@ class CriticAgent:
     "人物塑造": 8.0,
     "情节推进": 8.5,
     "情感浓度": 7.0,
-    "原创性": 8.0
+    "原创性": 8.0,
+    "一致性": 8.0
   }},
   "strengths": ["优点1", "优点2"],
   "weaknesses": ["问题1", "问题2"],
   "specific_suggestions": [
     {{
-      "location": "定位到具体段落（引用开头几个字）",
+      "severity": "critical 或 major 或 minor",
+      "location": "定位到具体段落",
       "issue": "具体问题",
       "suggestion": "修改建议",
-      "reference": "参考了哪本书的哪个技法"
+      "reference": "参考了哪本书的技法"
     }}
   ],
-  "must_fix": ["必须修改的问题（阻碍发表级别）"],
+  "must_fix": ["必须修改的问题（阻碍发表级别，最多3条）"],
   "nice_to_fix": ["锦上添花的建议"],
+  "consistency_issues": ["与全书伏笔或角色约束不一致的地方"],
   "summary": "一句话总结评价"
 }}
 """
@@ -110,4 +122,5 @@ class CriticAgent:
         try:
             return json.loads(response)
         except json.JSONDecodeError:
+            print("  ⚠ 批评家：JSON解析失败，将使用原始文本")
             return {"raw_response": response, "parse_error": True}

@@ -13,6 +13,7 @@ from agents.critic import CriticAgent
 from agents.reviser import ReviserAgent
 from memory.experience_log import ExperienceLog
 from memory.dynamic_fewshot import fewshot, DynamicFewShot
+from memory.consistency_tracker import ConsistencyTracker  # v2
 
 
 class WritingWorkflow:
@@ -32,12 +33,14 @@ class WritingWorkflow:
         self.reviser = ReviserAgent()
         self.experience_log = ExperienceLog()
         self.fewshot_manager = fewshot
+        self.consistency = None  # v2：惰性初始化，load_novel 时赋值
 
         self.novel_title = ""
         self.novel_genre = ""
         self.global_outline = {}
         self.chapters = []
         self.current_chapter = 0
+        self._novel_dir_path = ""  # load_novel 时记录，避免路径重建不一致
 
     # ==================== 初始化 ====================
 
@@ -47,6 +50,7 @@ class WritingWorkflow:
         self.novel_genre = genre
         self.current_chapter = 0
         self.chapters = []
+        self._novel_dir_path = os.path.join(config.output_dir, self._safe_filename(title))
 
         print(f"\n📖 初始化小说：《{title}》")
         print(f"   类型：{genre}")
@@ -66,6 +70,7 @@ class WritingWorkflow:
 
     def load_novel(self, novel_dir: str) -> bool:
         """从已有目录加载小说进度，自动检测并修复幽灵章节"""
+        self._novel_dir_path = novel_dir
         outline_path = os.path.join(novel_dir, "outline.json")
         chapters_path = os.path.join(novel_dir, "chapters.json")
 
@@ -100,8 +105,16 @@ class WritingWorkflow:
             self.chapters = valid
             self.current_chapter = len(self.chapters)
 
+        # v2：初始化一致性追踪器
+        self.consistency = ConsistencyTracker(novel_dir=novel_dir)
+        self.consistency.load()
+
         print(f"📂 已加载：《{self.novel_title}》")
         print(f"   已完成：{self.current_chapter} 章")
+        if self.consistency:
+            stats = self.consistency.stats()
+            if stats["total"] > 0:
+                print(f"   伏笔回收：{stats['rate']}")
         return True
 
     # ==================== 核心循环 ====================
@@ -144,6 +157,12 @@ class WritingWorkflow:
         )
         print(f"   ✓ 结构设计完成")
 
+        # v2：从架构中提取新伏笔
+        if self.consistency:
+            self._track_foreshadowing(chapter_num, architecture)
+            self.consistency.snapshot_character("第{}章完成".format(chapter_num),
+                {"章节号": chapter_num, "标题": chapter_title})
+
         # STEP 2: 作家写作
         print(f"\n✍️  [2/5] 作家创作初稿...")
         draft = self.writer.write_chapter(
@@ -158,8 +177,11 @@ class WritingWorkflow:
         word_count = len(content)
         print(f"   ✓ 初稿完成（{word_count}字）")
 
-        # STEP 3: 批评家评审
+        # STEP 3: 批评家评审（v2：注入一致性检查清单）
         print(f"\n🔍 [3/5] 批评家评审...")
+        checklist = self.consistency.checklist() if self.consistency else ""
+        if checklist and checklist != "（暂无一致性约束）":
+            print(f"   📋 一致性检查清单已加载（{len(self.consistency.open_list())}个待回收伏笔）")
         critique = self.critic.critique(
             chapter_content=content,
             chapter_number=chapter_num,
@@ -167,16 +189,24 @@ class WritingWorkflow:
             architecture=architecture,
             novel_genre=self.novel_genre,
             style_fingerprint=draft.get("style_fingerprint", {}),
+            consistency_checklist=checklist,  # v2
         )
         score = critique.get("overall_score", "?")
         print(f"   ✓ 评审完成 —— 总分：{score}/10")
+
+        # v2：将批评家发现的一致性问题喂入追踪器
+        if self.consistency:
+            issues = critique.get("consistency_issues", [])
+            for issue in issues:
+                if isinstance(issue, str) and issue.strip():
+                    self.consistency.plant(chapter_num, f"[批评家标记] {issue}")
 
         # 显示评审摘要
         if not critique.get("parse_error"):
             print(f"   优点：{', '.join(critique.get('strengths', [])[:2])}")
             print(f"   待改进：{', '.join(critique.get('weaknesses', [])[:2])}")
 
-        # STEP 4: 修订者修改
+        # STEP 4: 修订者修改（v2：修订上限，只改最严重问题）
         print(f"\n🔧 [4/5] 修订者修改...")
         revision = self.reviser.revise(
             original_content=content,
@@ -185,7 +215,9 @@ class WritingWorkflow:
             chapter_title=chapter_title,
         )
         final_content = revision["revised_content"]
-        print(f"   ✓ 修订完成")
+        fixed = len(revision.get("changes_made", []))
+        skipped = len(revision.get("skipped", []))
+        print(f"   ✓ 修订完成（修改{fixed}条，有意跳过{skipped}条minor问题）")
 
         # STEP 5: 自我反思 & 经验存档
         print(f"\n💾 [5/5] 自我反思 & 存档...")
@@ -213,6 +245,8 @@ class WritingWorkflow:
         self._save_single_chapter(chapter_record)  # 先写正文到磁盘
         self.current_chapter = chapter_num
         self._save_chapters_meta()                  # 再更新元数据索引
+        if self.consistency:
+            self.consistency.save()
 
         # 显示进化报告
         print(f"\n{self.experience_log.get_evolution_report()}")
@@ -231,7 +265,7 @@ class WritingWorkflow:
         if not self.chapters:
             return "（这是第一章，无前情）"
 
-        novel_dir = os.path.join(config.output_dir, self._safe_filename(self.novel_title))
+        novel_dir = self._novel_dir()
         recent = self.chapters[-3:]
         lines = []
         for ch in recent:
@@ -245,6 +279,8 @@ class WritingWorkflow:
         return '\n'.join(lines)
 
     def _novel_dir(self) -> str:
+        if self._novel_dir_path:
+            return self._novel_dir_path
         return os.path.join(config.output_dir, self._safe_filename(self.novel_title))
 
     def _save_outline(self):
@@ -298,6 +334,22 @@ class WritingWorkflow:
                     f.write(f"\n{'='*50}\n")
                     f.write(f"第{ch['number']}章 {ch['title']}（正文缺失）\n")
                     f.write(f"{'='*50}\n\n")
+
+    def _track_foreshadowing(self, chapter_num: int, architecture: dict):
+        """从架构设计中提取伏笔信息，喂入一致性追踪器"""
+        if architecture.get("parse_error"):
+            return
+        structure = architecture.get("structure", {})
+        # 结尾钩子是下一章的伏笔
+        ending = structure.get("ending", {})
+        hook = ending.get("hook_for_next", "")
+        if hook:
+            self.consistency.plant(chapter_num, f"钩子：{hook}")
+        # 高潮中的关键事件也作为伏笔
+        climax = structure.get("climax", {})
+        desc = climax.get("description", "")
+        if desc:
+            self.consistency.plant(chapter_num, f"高潮伏笔：{desc}")
 
     def _safe_filename(self, name: str) -> str:
         """生成安全的文件名"""

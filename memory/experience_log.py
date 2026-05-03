@@ -158,4 +158,5 @@ class ExperienceLog:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
+            print("  ⚠ 反思日志：JSON解析失败，保存原始文本")
             return {"raw_reflection": text}

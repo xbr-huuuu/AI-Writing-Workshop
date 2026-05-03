@@ -33,7 +33,7 @@ class Config:
 
     # 知识库配置
     vector_db_path: str = "./data/vector_db"
-    embedding_model: str = "text-embedding-3-small"  # OpenAI embedding
+    # 向量化使用 all-MiniLM-L6-v2（SentenceTransformer），见 vector_store.py
 
     # 写作参数
     max_chapter_words: int = 4000

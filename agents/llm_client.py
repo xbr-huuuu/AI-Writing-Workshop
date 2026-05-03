@@ -1,6 +1,7 @@
 """
 LLM客户端 —— 统一封装 DeepSeek / OpenAI / Anthropic 调用
 """
+import time
 import traceback
 from typing import Optional
 from config import config
@@ -8,6 +9,9 @@ from config import config
 
 class LLMClient:
     """统一的大模型调用接口，优先使用 DeepSeek"""
+
+    MAX_RETRIES = 3
+    RETRY_DELAY = 3  # 秒，指数退避基数
 
     def __init__(self):
         self._openai_client = None
@@ -49,14 +53,21 @@ class LLMClient:
         model = model or config.writer_model
         temp = temperature if temperature is not None else config.default_temperature
 
-        try:
-            if self._is_claude_model(model):
-                return self._chat_anthropic(system, user, model, temp, max_tokens)
-            else:
-                return self._chat_openai(system, user, model, temp, max_tokens)
-        except Exception:
-            traceback.print_exc()
-            raise
+        last_error = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                if self._is_claude_model(model):
+                    return self._chat_anthropic(system, user, model, temp, max_tokens)
+                else:
+                    return self._chat_openai(system, user, model, temp, max_tokens)
+            except Exception as e:
+                last_error = e
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAY * attempt
+                    print(f"  ⚠ API调用失败（第{attempt}次），{delay}秒后重试：{e}")
+                    time.sleep(delay)
+        traceback.print_exc()
+        raise last_error
 
     def _chat_openai(self, system: str, user: str, model: str, temp: float, max_tokens: int) -> str:
         messages = [
