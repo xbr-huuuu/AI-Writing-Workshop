@@ -1,0 +1,113 @@
+"""
+批评家Agent —— 严格对标豆瓣Top100标准评审初稿
+"""
+import json
+from config import config
+from agents.llm_client import llm
+from knowledge_base.vector_store import store
+
+
+class CriticAgent:
+    """批评家：以严苛标准评审写作质量"""
+
+    def __init__(self):
+        self.model = config.critic_model
+
+    def critique(
+        self,
+        chapter_content: str,
+        chapter_number: int,
+        chapter_title: str,
+        architecture: dict,
+        novel_genre: str,
+        style_fingerprint: dict,
+    ) -> dict:
+        """对一章的初稿进行评审"""
+
+        # 检索对标标准
+        similar_books = store.search_similar_books(f"{novel_genre} 优秀写作标准 描写 节奏 对话")
+        past_critiques = store.search_experiences(f"评审标准 {novel_genre}")
+
+        system = self._build_critic_system(similar_books, past_critiques)
+
+        user = f"""
+【评审对象】
+第{chapter_number}章：{chapter_title}
+类型：{novel_genre}
+
+【架构师的设计要求】
+{json.dumps(architecture, ensure_ascii=False, indent=2)[:800]}
+
+【当前章节文风数据】
+- 总字数：{style_fingerprint.get('stats', {}).get('total_chars', '?')}
+- 平均句长：{style_fingerprint.get('stats', {}).get('avg_sentence_length', '?')}字
+- 对话占比：{style_fingerprint.get('stats', {}).get('dialogue_ratio', '?')}
+- 节奏类型：{style_fingerprint.get('rhythm', {}).get('rhythm_type', '?')}
+
+【待评审正文】
+---
+{chapter_content}
+---
+
+请以JSON格式输出评审报告：
+{{
+  "overall_score": 8.5,
+  "dimension_scores": {{
+    "语言质量": 8.0,
+    "节奏控制": 7.5,
+    "人物塑造": 8.0,
+    "情节推进": 8.5,
+    "情感浓度": 7.0,
+    "原创性": 8.0
+  }},
+  "strengths": ["优点1", "优点2"],
+  "weaknesses": ["问题1", "问题2"],
+  "specific_suggestions": [
+    {{
+      "location": "定位到具体段落（引用开头几个字）",
+      "issue": "具体问题",
+      "suggestion": "修改建议",
+      "reference": "参考了哪本书的哪个技法"
+    }}
+  ],
+  "must_fix": ["必须修改的问题（阻碍发表级别）"],
+  "nice_to_fix": ["锦上添花的建议"],
+  "summary": "一句话总结评价"
+}}
+"""
+
+        response = llm.chat(system=system, user=user, model=self.model, temperature=config.critique_temperature, max_tokens=3000)
+        return self._parse_response(response)
+
+    def _build_critic_system(self, books: list[dict], past: list[dict]) -> str:
+        parts = [
+            "你是一位严苛的文学编辑，拥有30年从业经验。",
+            "你的评审标准对标豆瓣Top100经典作品的质量水平。",
+            "你不会因为这是AI生成的就降低标准，相反，你会更严格。",
+            "你的批评必须具体、有操作性，不能笼统。",
+        ]
+
+        if books:
+            parts.append("\n参考标准：")
+            for b in books:
+                meta = b.get("metadata", {})
+                parts.append(f"- 《{meta.get('title', '?')}》（豆瓣{meta.get('douban_score', '?')}分）")
+
+        if past:
+            parts.append("\n历史评审中发现的重点关注维度：")
+            for p in past:
+                meta = p.get("metadata", {})
+                parts.append(f"- {meta.get('summary', '')}")
+
+        return '\n'.join(parts)
+
+    def _parse_response(self, response: str) -> dict:
+        response = response.strip()
+        if "```json" in response:
+            response = response.split("```json")[1].split("```")[0]
+        elif "```" in response:
+            response = response.split("```")[1].split("```")[0]
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            return {"raw_response": response, "parse_error": True}
