@@ -171,4 +171,13 @@ class ExperienceLog:
     def _repair_json(text: str) -> str:
         import re
         text = re.sub(r',\s*(\}|\])', r'\1', text)
+        text = re.sub(r',\s*"[^"]*"\s*:\s*[^\}\]\s,]*$', '', text)
+        text = re.sub(r',\s*"[^"]*"\s*$', '', text)
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+        in_string = (text.count('"') - text.count('\\"')) % 2 == 1
+        if in_string:
+            text += '"'
+        text += ']' * open_brackets
+        text += '}' * open_braces
         return text

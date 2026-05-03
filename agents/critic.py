@@ -88,7 +88,7 @@ class CriticAgent:
 }}
 """
 
-        response = llm.chat(system=system, user=user, model=self.model, temperature=config.critique_temperature, max_tokens=3000)
+        response = llm.chat(system=system, user=user, model=self.model, temperature=config.critique_temperature, max_tokens=6000)
         return self._parse_response(response)
 
     def _build_critic_system(self, books: list[dict], past: list[dict]) -> str:
@@ -136,4 +136,17 @@ class CriticAgent:
     def _repair_json(text: str) -> str:
         import re
         text = re.sub(r',\s*(\}|\])', r'\1', text)
+        # 修复截断：补全未闭合的结构
+        # 移除末尾不完整的字段（截断在 key 或 value 中间）
+        text = re.sub(r',\s*"[^"]*"\s*:\s*[^\}\]\s,]*$', '', text)
+        text = re.sub(r',\s*"[^"]*"\s*$', '', text)
+        # 补括号
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+        # 检查是否在字符串内被截断
+        in_string = (text.count('"') - text.count('\\"')) % 2 == 1
+        if in_string:
+            text += '"'
+        text += ']' * open_brackets
+        text += '}' * open_braces
         return text
