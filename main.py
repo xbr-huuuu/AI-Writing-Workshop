@@ -158,6 +158,43 @@ def list_existing_novels() -> list[str]:
     ]
 
 
+def cmd_outline():
+    """查看当前小说大纲"""
+    import json
+    novels = list_existing_novels()
+    if not novels:
+        print("未找到已有小说，请先 python main.py init")
+        return
+
+    print("\n已有小说：")
+    for i, name in enumerate(novels):
+        print(f"  [{i+1}] {name}")
+
+    choice = input("\n选择小说编号：").strip()
+    if not choice.isdigit() or not (1 <= int(choice) <= len(novels)):
+        print("无效选择")
+        return
+
+    novel_dir = os.path.join(config.output_dir, novels[int(choice)-1])
+    outline_path = os.path.join(novel_dir, "outline.json")
+    with open(outline_path, "r", encoding="utf-8") as f:
+        d = json.load(f)
+
+    # 硬软约束
+    hc = d.get("hard_constraints", {})
+    if hc:
+        print(f"\n🔒 硬约束（不可变）")
+        print(f"   核心主题：{hc.get('core_theme', '')}")
+        for cf in hc.get("character_fates", []):
+            print(f"   {cf.get('name', '?')} → {cf.get('final_fate', '')}")
+
+    # 章节列表
+    chapters = d.get("chapters", [])
+    print(f"\n📋 章节规划（共{len(chapters)}章）")
+    for c in chapters:
+        print(f"   第{c['number']}章《{c['title']}》— {c.get('synopsis', '')[:100]}")
+
+
 def main():
     show_banner()
 
@@ -167,6 +204,7 @@ def main():
         print("  python main.py write     写下一章（交互式）")
         print("  python main.py batch N   连续写N章")
         print("  python main.py report    查看进化报告")
+        print("  python main.py outline   查看当前小说大纲")
         print("  python main.py analyze   分析豆瓣Top100书籍")
         print("  python main.py stats     查看知识库统计")
         return
@@ -181,6 +219,8 @@ def main():
         cmd_batch()
     elif cmd == "report":
         cmd_report()
+    elif cmd == "outline":
+        cmd_outline()
     elif cmd == "analyze":
         cmd_analyze()
     elif cmd == "stats":

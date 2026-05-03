@@ -189,12 +189,29 @@ class ArchitectAgent:
     def _parse_response(self, response: str) -> dict:
         import json
         response = response.strip()
+        # 提取 JSON 块
         if "```json" in response:
             response = response.split("```json")[1].split("```")[0]
         elif "```" in response:
             response = response.split("```")[1].split("```")[0]
+        else:
+            # 没有代码围栏，尝试找到最外层 JSON
+            start = response.find('{')
+            end = response.rfind('}')
+            if start != -1 and end != -1 and end > start:
+                response = response[start:end + 1]
+        # 修复常见 JSON 错误
+        response = self._repair_json(response)
         try:
             return json.loads(response)
-        except json.JSONDecodeError:
-            print("  ⚠ 架构师：JSON解析失败，将使用原始文本（后续流程会降级处理）")
+        except json.JSONDecodeError as e:
+            print(f"  ⚠ 架构师：JSON解析失败({e})，将使用原始文本")
+            print(f"     响应前200字: {response[:200]}")
             return {"raw_response": response, "parse_error": True}
+
+    @staticmethod
+    def _repair_json(text: str) -> str:
+        import re
+        # 去除尾部逗号（} 或 ] 前的逗号）
+        text = re.sub(r',\s*(\}|\])', r'\1', text)
+        return text

@@ -91,6 +91,7 @@ python main.py init
 python main.py write     # 写一章
 python main.py batch 5   # 连续写 5 章
 python main.py report    # 看进化报告
+python main.py outline   # 查看大纲
 ```
 
 ## 命令速查
@@ -102,6 +103,7 @@ python main.py report    # 看进化报告
 | `python main.py write` | 写下一章（交互式） | 每次写作 |
 | `python main.py batch N` | 一口气写 N 章 | 想批量产出时 |
 | `python main.py report` | 看进化报告（评分趋势） | 随时 |
+| `python main.py outline` | 查看大纲（硬约束+章节规划） | 随时 |
 | `python main.py stats` | 看知识库数据量 | 随时 |
 | `python show_analysis.py 红楼梦` | 查看某本书的分析报告 | 随时 |
 | `python show_analysis.py` | 浏览所有已分析书籍 | 随时 |

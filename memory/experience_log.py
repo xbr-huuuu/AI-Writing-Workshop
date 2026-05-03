@@ -155,8 +155,20 @@ class ExperienceLog:
             text = text.split("```json")[1].split("```")[0]
         elif "```" in text:
             text = text.split("```")[1].split("```")[0]
+        else:
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1 and end > start:
+                text = text[start:end + 1]
+        text = self._repair_json(text)
         try:
             return json.loads(text)
-        except json.JSONDecodeError:
-            print("  ⚠ 反思日志：JSON解析失败，保存原始文本")
+        except json.JSONDecodeError as e:
+            print(f"  ⚠ 反思日志：JSON解析失败({e})，保存原始文本")
             return {"raw_reflection": text}
+
+    @staticmethod
+    def _repair_json(text: str) -> str:
+        import re
+        text = re.sub(r',\s*(\}|\])', r'\1', text)
+        return text
