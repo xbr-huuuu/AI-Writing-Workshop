@@ -288,6 +288,79 @@ class WritingWorkflow:
         for _ in range(num):
             self.write_next_chapter()
 
+    def rewrite_chapter(self, chapter_num: int):
+        """重写指定章节：保留情节骨架，只优化文笔"""
+        if chapter_num < 1 or chapter_num > len(self.chapters):
+            print(f"✗ 章节号无效：第{chapter_num}章不存在")
+            return
+
+        ch = self.chapters[chapter_num - 1]
+        title = ch.get("title", f"第{chapter_num}章")
+
+        # 读原稿
+        filepath = os.path.join(self._novel_dir(), f"chapter_{chapter_num:03d}.txt")
+        if not os.path.exists(filepath):
+            print(f"✗ 正文文件不存在：{filepath}")
+            return
+        with open(filepath, "r", encoding="utf-8") as f:
+            original = f.read()
+
+        # 获取大纲中本章的 synopsis
+        outline_chapters = self.global_outline.get("chapters", [])
+        synopsis = ""
+        if chapter_num <= len(outline_chapters):
+            synopsis = outline_chapters[chapter_num - 1].get("synopsis", "")
+
+        # 获取上下文（前几章全文 + 实体注册表）
+        ctx = self._get_previous_summary()
+        entity_ctx = ""
+        if self.entity_tracker:
+            entity_ctx = self.entity_tracker.get_context_for_chapter(chapter_num, title)
+
+        print(f"\n🔧 重写第{chapter_num}章《{title}》")
+        print(f"   保留情节：{synopsis[:80]}...")
+
+        # 调用作家重写
+        from agents.llm_client import llm as llm_client
+
+        system = f"""你是一位小说润色师。请优化以下章节的写作质量，但严格保留原有的情节、事件和人物行为。
+
+优化方向：
+1. 增加人物对话（至少3段自然对话）
+2. 改善节奏，避免连续大段叙述
+3. 用具体感官细节替代抽象心理描写
+4. 让配角有自己的声音，不要成为作者观点的传声筒
+5. 保留原文的精华段落，不要为了改而改
+
+直接输出修改后的完整正文，不要任何说明。"""
+
+        synopsis_block = f"\n\n【本章情节约束 —— 不可改变】\n{synopsis}" if synopsis else ""
+
+        user = f"""第{chapter_num}章《{title}》
+
+{ctx}
+
+{entity_ctx}
+{synopsis_block}
+
+【原文】
+---
+{original}
+---
+
+请优化本章："""
+
+        revised = llm_client.chat(system=system, user=user, temperature=0.7, max_tokens=8000)
+
+        # 覆盖原文件
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(revised)
+
+        # 更新内存中的内容
+        self.chapters[chapter_num - 1]["content"] = revised
+
+        print(f"   ✓ 第{chapter_num}章已重写（不更新注册表和一致性追踪）")
+
     # ==================== 辅助方法 ====================
 
     def _get_previous_summary(self) -> str:

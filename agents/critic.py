@@ -94,7 +94,27 @@ class CriticAgent:
 """
 
         response = llm.chat(system=system, user=user, model=self.model, temperature=config.critique_temperature, max_tokens=6000)
-        return self._parse_response(response)
+        result = self._parse_response(response)
+        # 截断修复：JSON解析失败时，将已返回的内容喂回去让它续写
+        if result.get("parse_error") and not response.rstrip().endswith(('}', ']')):
+            print("   🔄 JSON被截断，正在续写...")
+            continue_prompt = f"""以下JSON在生成时被截断了，请从截断处精确续写剩余部分，直接输出被截断的JSON片段（从截断字符开始写）：
+
+【已生成的完整部分 + 截断位置】
+{response}←截断点
+
+只输出剩余的JSON内容，不要重复已生成的部分："""
+            continuation = llm.chat(
+                system="你是一个JSON续写工具，从截断点精确输出剩余字符。",
+                user=continue_prompt,
+                temperature=0.1,
+                max_tokens=3000,
+            )
+            response = response + continuation
+            result = self._parse_response(response)
+            if not result.get("parse_error"):
+                print("   ✓ 续写成功")
+        return result
 
     def _multi_dimension_search(self, dim_queries: dict) -> str:
         seen_ids = set()

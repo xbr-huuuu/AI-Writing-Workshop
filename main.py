@@ -163,6 +163,37 @@ def list_existing_novels() -> list[str]:
     ]
 
 
+def cmd_rewrite():
+    """重写指定章节：保留情节，优化文笔"""
+    wf = WritingWorkflow()
+    novels = list_existing_novels()
+
+    if not novels:
+        print("未找到已有小说")
+        return
+
+    print("\n已有小说：")
+    for i, name in enumerate(novels):
+        print(f"  [{i+1}] {name}")
+
+    choice = input("\n选择小说编号：").strip()
+    if not choice.isdigit() or not (1 <= int(choice) <= len(novels)):
+        print("无效选择")
+        return
+
+    novel_dir = os.path.join(config.output_dir, novels[int(choice)-1])
+    if not wf.load_novel(novel_dir):
+        return
+
+    print(f"\n已完成章节：第1-{wf.current_chapter}章")
+    ch_str = input("要重写第几章？").strip()
+    if not ch_str.isdigit():
+        print("无效章节号")
+        return
+
+    wf.rewrite_chapter(int(ch_str))
+
+
 def cmd_outline():
     """查看当前小说大纲"""
     import json
@@ -210,6 +241,7 @@ def main():
         print("  python main.py batch N   连续写N章")
         print("  python main.py report    查看进化报告")
         print("  python main.py outline   查看当前小说大纲")
+        print("  python main.py rewrite   重写某章（保留情节，优化文笔）")
         print("  python main.py analyze   分析豆瓣Top100书籍")
         print("  python main.py stats     查看知识库统计")
         return
@@ -226,6 +258,8 @@ def main():
         cmd_report()
     elif cmd == "outline":
         cmd_outline()
+    elif cmd == "rewrite":
+        cmd_rewrite()
     elif cmd == "analyze":
         cmd_analyze()
     elif cmd == "stats":
