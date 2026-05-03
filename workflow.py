@@ -65,7 +65,7 @@ class WritingWorkflow:
         return self.global_outline
 
     def load_novel(self, novel_dir: str) -> bool:
-        """从已有目录加载小说进度"""
+        """从已有目录加载小说进度，自动检测并修复幽灵章节"""
         outline_path = os.path.join(novel_dir, "outline.json")
         chapters_path = os.path.join(novel_dir, "chapters.json")
 
@@ -81,7 +81,23 @@ class WritingWorkflow:
 
         if os.path.exists(chapters_path):
             with open(chapters_path, "r", encoding="utf-8") as f:
-                self.chapters = json.load(f)
+                meta_chapters = json.load(f)
+            # 按章节号排序
+            meta_chapters.sort(key=lambda c: c["number"])
+            # 只保留连续章节（从1开始无间断）
+            valid = []
+            ghosts = []
+            expected = 1
+            for ch in meta_chapters:
+                ch_file = os.path.join(novel_dir, f"chapter_{ch['number']:03d}.txt")
+                if ch["number"] == expected and os.path.exists(ch_file):
+                    valid.append(ch)
+                    expected += 1
+                else:
+                    ghosts.append(ch["number"])
+            if ghosts:
+                print(f"⚠ 检测到 {len(ghosts)} 个异常章节（第{', '.join(map(str, ghosts))}章），已自动回退")
+            self.chapters = valid
             self.current_chapter = len(self.chapters)
 
         print(f"📂 已加载：《{self.novel_title}》")
@@ -183,7 +199,7 @@ class WritingWorkflow:
         )
         print(f"   ✓ 经验已存入进化库")
 
-        # 保存章节
+        # 保存章节（先写正文文件，再更新元数据，防止崩了丢章节）
         chapter_record = {
             "number": chapter_num,
             "title": chapter_title,
@@ -194,8 +210,9 @@ class WritingWorkflow:
             "timestamp": experience.get("timestamp", ""),
         }
         self.chapters.append(chapter_record)
+        self._save_single_chapter(chapter_record)  # 先写正文到磁盘
         self.current_chapter = chapter_num
-        self._save_chapters()
+        self._save_chapters_meta()                  # 再更新元数据索引
 
         # 显示进化报告
         print(f"\n{self.experience_log.get_evolution_report()}")
@@ -227,20 +244,34 @@ class WritingWorkflow:
             lines.append(f"第{ch['number']}章《{ch['title']}》：{content_preview}...")
         return '\n'.join(lines)
 
+    def _novel_dir(self) -> str:
+        return os.path.join(config.output_dir, self._safe_filename(self.novel_title))
+
     def _save_outline(self):
         """保存大纲"""
-        novel_dir = os.path.join(config.output_dir, self._safe_filename(self.novel_title))
-        os.makedirs(novel_dir, exist_ok=True)
-        path = os.path.join(novel_dir, "outline.json")
+        os.makedirs(self._novel_dir(), exist_ok=True)
+        path = os.path.join(self._novel_dir(), "outline.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.global_outline, f, ensure_ascii=False, indent=2)
 
-    def _save_chapters(self):
-        """保存所有章节"""
-        novel_dir = os.path.join(config.output_dir, self._safe_filename(self.novel_title))
-        os.makedirs(novel_dir, exist_ok=True)
+    def _save_single_chapter(self, ch: dict):
+        """保存单章正文到文件（先于元数据，崩了不会丢）"""
+        os.makedirs(self._novel_dir(), exist_ok=True)
+        content = ch.get("content", "")
+        if not content:
+            return
+        filepath = os.path.join(self._novel_dir(), f"chapter_{ch['number']:03d}.txt")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(f"第{ch['number']}章 {ch['title']}\n")
+            f.write(f"编辑评分：{ch.get('critique_score', '?')}/10\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(content)
 
-        # 保存章节元数据
+    def _save_chapters_meta(self):
+        """保存章节元数据索引并生成全书合订本"""
+        os.makedirs(self._novel_dir(), exist_ok=True)
+
+        # 保存元数据
         meta = [
             {
                 "number": ch["number"],
@@ -250,49 +281,23 @@ class WritingWorkflow:
             }
             for ch in self.chapters
         ]
-        with open(os.path.join(novel_dir, "chapters.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self._novel_dir(), "chapters.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
-        # 保存每章全文
-        for ch in self.chapters:
-            content = ch.get("content")
-            if not content:
-                # 旧章节没有 content，从章节文件读取
-                filename = f"chapter_{ch['number']:03d}.txt"
-                filepath = os.path.join(novel_dir, filename)
-                if os.path.exists(filepath):
-                    continue  # 已有文件，跳过
-                else:
-                    content = "（正文丢失）"
-            else:
-                filename = f"chapter_{ch['number']:03d}.txt"
-                filepath = os.path.join(novel_dir, filename)
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(f"第{ch['number']}章 {ch['title']}\n")
-                    f.write(f"编辑评分：{ch.get('critique_score', '?')}/10\n")
-                    f.write("=" * 50 + "\n\n")
-                    f.write(content)
-
-        # 保存整本书
-        book_path = os.path.join(novel_dir, f"{self._safe_filename(self.novel_title)}_全文.txt")
+        # 生成全书合订本
+        book_path = os.path.join(self._novel_dir(), f"{self._safe_filename(self.novel_title)}_全文.txt")
         with open(book_path, "w", encoding="utf-8") as f:
             f.write(f"《{self.novel_title}》\n\n")
             for ch in self.chapters:
-                content = ch.get("content")
-                if not content:
-                    ch_file = os.path.join(novel_dir, f"chapter_{ch['number']:03d}.txt")
-                    if os.path.exists(ch_file):
-                        with open(ch_file, "r", encoding="utf-8") as cf:
-                            lines = cf.readlines()
-                            # 跳过前4行标题头
-                            content = "".join(lines[4:]) if len(lines) > 4 else "".join(lines)
-                    else:
-                        content = "（正文缺失）"
-                f.write(f"\n{'='*50}\n")
-                f.write(f"第{ch['number']}章 {ch['title']}\n")
-                f.write(f"{'='*50}\n\n")
-                f.write(content)
-                f.write("\n\n")
+                ch_file = os.path.join(self._novel_dir(), f"chapter_{ch['number']:03d}.txt")
+                if os.path.exists(ch_file):
+                    with open(ch_file, "r", encoding="utf-8") as cf:
+                        f.write(cf.read())
+                        f.write("\n\n")
+                else:
+                    f.write(f"\n{'='*50}\n")
+                    f.write(f"第{ch['number']}章 {ch['title']}（正文缺失）\n")
+                    f.write(f"{'='*50}\n\n")
 
     def _safe_filename(self, name: str) -> str:
         """生成安全的文件名"""
