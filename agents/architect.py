@@ -147,7 +147,7 @@ class ArchitectAgent:
 }}
 """
 
-        response = llm.chat(system=system, user=user, model=self.model, temperature=0.8, max_tokens=4000)
+        response = llm.chat(system=system, user=user, model=self.model, temperature=0.8, max_tokens=16000)
         return self._parse_response(response)
 
     def _format_book_refs(self, books: list[dict]) -> str:

@@ -2,10 +2,16 @@
 向量存储 —— 基于 ChromaDB
 存储豆瓣Top100书籍特征 + AI自身写作经验
 """
+import os
 import chromadb
 from chromadb.config import Settings
+from chromadb.utils import embedding_functions
 from typing import Optional
 from config import config
+
+# 确保 HuggingFace 镜像在导入 sentence_transformers 之前已设置
+if not os.getenv("HF_ENDPOINT"):
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 
 class VectorStore:
@@ -20,16 +26,22 @@ class VectorStore:
             path=path,
             settings=Settings(anonymized_telemetry=False),
         )
+        # 使用 sentence-transformers 嵌入函数（走 HuggingFace 链路，享受镜像加速）
+        self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2",
+        )
         self._init_collections()
 
     def _init_collections(self):
         self.books_collection = self.client.get_or_create_collection(
             name="top100_books",
             metadata={"description": "豆瓣Top100书籍文风特征库"},
+            embedding_function=self.embedding_fn,
         )
         self.experience_collection = self.client.get_or_create_collection(
             name="writing_experience",
             metadata={"description": "AI写作经验积累库"},
+            embedding_function=self.embedding_fn,
         )
 
     # ========== 书籍特征操作 ==========
