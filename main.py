@@ -61,10 +61,9 @@ def cmd_init():
 
 
 def cmd_write():
-    """写下一章"""
+    """写下一章（交互式）"""
     wf = WritingWorkflow()
 
-    # 尝试加载已有小说
     novels = list_existing_novels()
     if novels:
         print("\n已有小说：")
@@ -74,11 +73,17 @@ def cmd_write():
         if choice.isdigit() and 1 <= int(choice) <= len(novels):
             novel_dir = os.path.join(config.output_dir, novels[int(choice)-1])
             if wf.load_novel(novel_dir):
-                chapter_title = input("章节名（留空使用大纲中的标题）：").strip() or None
-                wf.write_next_chapter(chapter_title)
+                num_str = input("要连续写几章？（默认1）：").strip()
+                num = int(num_str) if num_str.isdigit() else 1
+
+                if num == 1:
+                    chapter_title = input("章节名（留空使用大纲中的标题）：").strip() or None
+                    wf.write_next_chapter(chapter_title)
+                else:
+                    print(f"\n连续写 {num} 章，使用大纲标题...\n")
+                    wf.write_chapters(num)
             return
 
-    # 否则初始化新小说
     print("未找到已有小说，请先初始化：")
     cmd_init()
 
