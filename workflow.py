@@ -210,14 +210,20 @@ class WritingWorkflow:
     # ==================== 辅助方法 ====================
 
     def _get_previous_summary(self) -> str:
-        """获取前几章的摘要"""
+        """获取前几章的摘要（从章节文件读取正文）"""
         if not self.chapters:
             return "（这是第一章，无前情）"
 
+        novel_dir = os.path.join(config.output_dir, self._safe_filename(self.novel_title))
         recent = self.chapters[-3:]
         lines = []
         for ch in recent:
-            content_preview = ch["content"][:200].replace('\n', ' ')
+            filepath = os.path.join(novel_dir, f"chapter_{ch['number']:03d}.txt")
+            content = ""
+            if os.path.exists(filepath):
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+            content_preview = content[:200].replace('\n', ' ')
             lines.append(f"第{ch['number']}章《{ch['title']}》：{content_preview}...")
         return '\n'.join(lines)
 
@@ -249,23 +255,43 @@ class WritingWorkflow:
 
         # 保存每章全文
         for ch in self.chapters:
-            filename = f"chapter_{ch['number']:03d}.txt"
-            filepath = os.path.join(novel_dir, filename)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"第{ch['number']}章 {ch['title']}\n")
-                f.write(f"编辑评分：{ch.get('critique_score', '?')}/10\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(ch["content"])
+            content = ch.get("content")
+            if not content:
+                # 旧章节没有 content，从章节文件读取
+                filename = f"chapter_{ch['number']:03d}.txt"
+                filepath = os.path.join(novel_dir, filename)
+                if os.path.exists(filepath):
+                    continue  # 已有文件，跳过
+                else:
+                    content = "（正文丢失）"
+            else:
+                filename = f"chapter_{ch['number']:03d}.txt"
+                filepath = os.path.join(novel_dir, filename)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(f"第{ch['number']}章 {ch['title']}\n")
+                    f.write(f"编辑评分：{ch.get('critique_score', '?')}/10\n")
+                    f.write("=" * 50 + "\n\n")
+                    f.write(content)
 
         # 保存整本书
         book_path = os.path.join(novel_dir, f"{self._safe_filename(self.novel_title)}_全文.txt")
         with open(book_path, "w", encoding="utf-8") as f:
             f.write(f"《{self.novel_title}》\n\n")
             for ch in self.chapters:
+                content = ch.get("content")
+                if not content:
+                    ch_file = os.path.join(novel_dir, f"chapter_{ch['number']:03d}.txt")
+                    if os.path.exists(ch_file):
+                        with open(ch_file, "r", encoding="utf-8") as cf:
+                            lines = cf.readlines()
+                            # 跳过前4行标题头
+                            content = "".join(lines[4:]) if len(lines) > 4 else "".join(lines)
+                    else:
+                        content = "（正文缺失）"
                 f.write(f"\n{'='*50}\n")
                 f.write(f"第{ch['number']}章 {ch['title']}\n")
                 f.write(f"{'='*50}\n\n")
-                f.write(ch["content"])
+                f.write(content)
                 f.write("\n\n")
 
     def _safe_filename(self, name: str) -> str:
