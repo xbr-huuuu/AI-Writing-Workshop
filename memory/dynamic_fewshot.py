@@ -76,7 +76,7 @@ class DynamicFewShot:
             return ""
 
         signal = f"""
-【进化信号】你已写了{stats['total_experiences']}章，以下是验证过的高效技法：
+【进化信号】已积累{stats['total_experiences']}条写作技法，以下是验证过的高效技法：
 {chr(10).join(f'• {t[:200]}' for t in techniques[:5])}
 
 请在本次写作中优先使用这些已验证的技法。

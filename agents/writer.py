@@ -23,16 +23,18 @@ class WriterAgent:
         architecture: dict,
         previous_chapters_summary: str,
     ) -> dict:
-        """根据架构师的大纲写作一章"""
+        """根据架构师的大纲写作一章（多维度检索，集百家之长）"""
 
-        # 检索相关文风参考
-        style_query = self._build_style_query(architecture, novel_genre)
-        similar_books = store.search_similar_books(style_query)
+        # 分维度检索文风参考
+        dim_queries = {
+            "语言与描写": f"{novel_genre} 小说 语言风格 环境描写 意象 用词",
+            "对话与人物": f"{novel_genre} 小说 对话写作 人物塑造 心理描写",
+            "情感与氛围": f"{novel_genre} 小说 情感渲染 氛围营造 情绪起伏",
+        }
+        similar_books = self._multi_dimension_search(dim_queries)
 
-        # 检索过去成功的写作技巧
         past_tips = store.search_experiences(f"{novel_genre} 写作技巧 描写 对话 节奏")
 
-        # 构建写作提示词
         system = self._build_writer_system(similar_books, past_tips, novel_title)
 
         user = f"""
@@ -48,7 +50,7 @@ class WriterAgent:
 
 【写作要求】
 1. 严格遵循架构师的结构设计
-2. 运用参考书籍的技法，但用自己的语言
+2. 融合上述各维度参考书的技法，博采众长
 3. 目标字数：{config.max_chapter_words}字左右
 4. 在结尾处留下钩子，吸引读者继续阅读
 5. 直接输出小说正文，不需要任何前言或后记
@@ -66,28 +68,35 @@ class WriterAgent:
             "chapter_title": chapter_title,
             "content": draft,
             "style_fingerprint": fingerprint,
-            "references_used": [b.get("metadata", {}).get("title", "") for b in similar_books],
+            "references_used": similar_books,
         }
 
-    def _build_style_query(self, architecture: dict, genre: str) -> str:
-        """从架构设计中提取风格查询词"""
-        structure = architecture.get("structure", {})
-        style_notes = architecture.get("style_notes", "")
+    def _multi_dimension_search(self, dim_queries: dict) -> str:
+        """多维度检索：每个写作维度找最擅长的书，去重"""
+        seen_ids = set()
+        lines = []
+        for dim_name, query in dim_queries.items():
+            books = store.search_similar_books(query, k=config.top100_retrieval_k)
+            dim_lines = []
+            for b in books:
+                bid = b.get("id", "")
+                if bid in seen_ids:
+                    continue
+                seen_ids.add(bid)
+                meta = b.get("metadata", {})
+                analysis = meta.get("style_analysis", "")[:250]
+                dim_lines.append(f"    - 《{meta.get('title', '?')}》（{meta.get('author', '?')}）：{analysis}")
+            if dim_lines:
+                lines.append(f"  【{dim_name}】参考：")
+                lines.extend(dim_lines)
+        return '\n'.join(lines) if lines else "（暂无参考数据）"
 
-        opening_type = structure.get("opening", {}).get("type", "")
-        ending_type = structure.get("ending", {}).get("type", "")
-
-        return f"{genre} {opening_type} {ending_type} {style_notes}"
-
-    def _build_writer_system(self, books: list[dict], tips: list[dict], novel_title: str) -> str:
+    def _build_writer_system(self, book_refs: str, tips: list[dict], novel_title: str) -> str:
         parts = [f"你是一位才华横溢的小说家，正在创作《{novel_title}》。"]
 
-        if books:
-            parts.append("\n请汲取以下经典作品的技法：")
-            for b in books:
-                meta = b.get("metadata", {})
-                analysis = meta.get("style_analysis", "")[:300]
-                parts.append(f"- 《{meta.get('title', '?')}》：{analysis}")
+        if book_refs and book_refs != "（暂无参考数据）":
+            parts.append("\n请汲取以下经典作品各维度的技法，博采众长：")
+            parts.append(book_refs)
 
         if tips:
             parts.append("\n请运用你过去总结的成功经验：")

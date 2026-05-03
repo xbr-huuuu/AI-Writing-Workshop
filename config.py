@@ -43,7 +43,7 @@ class Config:
 
     # 进化参数
     experience_retrieval_k: int = 5       # 每次检索的经验条数
-    top100_retrieval_k: int = 3           # 每次检索的Top100参考数
+    top100_retrieval_k: int = 2           # 每个维度检索的Top100参考数（多维度合计可达8本）
     auto_save_interval: int = 1           # 每写几章自动保存一次经验
 
     # 输出路径

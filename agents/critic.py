@@ -25,10 +25,15 @@ class CriticAgent:
     ) -> dict:
         """对一章的初稿进行评审（v2：含一致性检查）"""
 
-        similar_books = store.search_similar_books(f"{novel_genre} 优秀写作标准 描写 节奏 对话")
+        dim_queries = {
+            "语言品质": f"{novel_genre} 小说 语言品质 用词精准 句式优美",
+            "叙事节奏": f"{novel_genre} 小说 叙事节奏 情节推进 张弛有度",
+            "人物塑造": f"{novel_genre} 小说 人物塑造 性格鲜明 对话真实",
+        }
+        book_refs = self._multi_dimension_search(dim_queries)
         past_critiques = store.search_experiences(f"评审标准 {novel_genre}")
 
-        system = self._build_critic_system(similar_books, past_critiques)
+        system = self._build_critic_system(book_refs, past_critiques)
 
         checklist_block = ""
         if consistency_checklist:
@@ -91,7 +96,27 @@ class CriticAgent:
         response = llm.chat(system=system, user=user, model=self.model, temperature=config.critique_temperature, max_tokens=6000)
         return self._parse_response(response)
 
-    def _build_critic_system(self, books: list[dict], past: list[dict]) -> str:
+    def _multi_dimension_search(self, dim_queries: dict) -> str:
+        seen_ids = set()
+        lines = []
+        for dim_name, query in dim_queries.items():
+            books = store.search_similar_books(query, k=config.top100_retrieval_k)
+            dim_lines = []
+            for b in books:
+                bid = b.get("id", "")
+                if bid in seen_ids:
+                    continue
+                seen_ids.add(bid)
+                meta = b.get("metadata", {})
+                dim_lines.append(
+                    f"    - 《{meta.get('title', '?')}》（豆瓣{meta.get('douban_score', '?')}分）"
+                )
+            if dim_lines:
+                lines.append(f"  【{dim_name}】标准参照：")
+                lines.extend(dim_lines)
+        return '\n'.join(lines) if lines else "（暂无参考数据）"
+
+    def _build_critic_system(self, book_refs: str, past: list[dict]) -> str:
         parts = [
             "你是一位严苛的文学编辑，拥有30年从业经验。",
             "你的评审标准对标豆瓣Top100经典作品的质量水平。",
@@ -99,11 +124,9 @@ class CriticAgent:
             "你的批评必须具体、有操作性，不能笼统。",
         ]
 
-        if books:
-            parts.append("\n参考标准：")
-            for b in books:
-                meta = b.get("metadata", {})
-                parts.append(f"- 《{meta.get('title', '?')}》（豆瓣{meta.get('douban_score', '?')}分）")
+        if book_refs and book_refs != "（暂无参考数据）":
+            parts.append("\n各维度参考标准：")
+            parts.append(book_refs)
 
         if past:
             parts.append("\n历史评审中发现的重点关注维度：")

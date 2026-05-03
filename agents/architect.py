@@ -23,29 +23,30 @@ class ArchitectAgent:
         previous_summary: str,
         novel_outline: str,
     ) -> dict:
-        """为一章设计结构大纲"""
+        """为一章设计结构大纲（多维度检索，集百家之长）"""
 
-        # 1. 从知识库检索同类书籍的结构参考
-        query = f"{novel_genre} 小说 章节结构 节奏设计 {chapter_title}"
-        similar_books = store.search_similar_books(query)
+        # 分维度检索：不同书擅长不同东西
+        dim_queries = {
+            "开篇技法": f"{novel_genre} 小说开篇 悬念 场景切入 第一句话",
+            "高潮设计": f"{novel_genre} 小说高潮 情节转折 情感峰值 冲突爆发",
+            "结尾钩子": f"{novel_genre} 小说结尾 留白 悬念 章节钩子 反转",
+            "节奏控制": f"{novel_genre} 小说节奏 张弛 场景转换 叙事速度",
+        }
+        book_refs = self._multi_dimension_search(dim_queries)
 
-        # 2. 从经验库检索之前成功的结构设计
         exp_query = f"章节结构设计 {novel_genre} 大纲 节奏"
         past_experiences = store.search_experiences(exp_query)
-
-        # 3. 构建提示词
-        book_refs = self._format_book_refs(similar_books)
         exp_refs = self._format_experiences(past_experiences)
 
         system = f"""你是一位资深小说架构师，专精于章节结构和节奏设计。
 
-你的设计哲学参考了以下豆瓣Top100经典作品的技法：
+以下豆瓣Top100经典作品按维度分类的技法参考：
 {book_refs}
 
 你过去成功的设计经验：
 {exp_refs}
 
-请为给定的章节设计详细的结构大纲。你的输出必须是严格的JSON格式。"""
+请综合以上所有书籍的技法，融会贯通，为给定章节设计结构。输出严格的JSON格式。"""
 
         user = f"""
 【小说信息】
@@ -117,9 +118,13 @@ class ArchitectAgent:
         premise: str,
         total_chapters: int = 30,
     ) -> dict:
-        """设计整本小说的全局大纲（v2：含硬软约束）"""
-        similar_books = store.search_similar_books(f"{novel_genre} 小说 整体结构 大纲")
-        book_refs = self._format_book_refs(similar_books)
+        """设计整本小说的全局大纲（v2：含硬软约束，多维度检索）"""
+        dim_queries = {
+            "整体结构": f"{novel_genre} 小说 整体结构 三幕 叙事框架",
+            "人物弧光": f"{novel_genre} 小说 人物成长 性格转变 角色命运",
+            "主题呈现": f"{novel_genre} 小说 核心主题 象征 隐喻 思想深度",
+        }
+        book_refs = self._multi_dimension_search(dim_queries)
 
         system = f"""你是一位资深小说架构师。参考以下经典作品的结构技法：
 {book_refs}
@@ -163,6 +168,28 @@ class ArchitectAgent:
 
         response = llm.chat(system=system, user=user, model=self.model, temperature=0.8, max_tokens=16000)
         return self._parse_response(response)
+
+    def _multi_dimension_search(self, dim_queries: dict) -> str:
+        """多维度检索：每个写作维度找最擅长的书，去重后按维度组织"""
+        seen_ids = set()
+        lines = []
+        for dim_name, query in dim_queries.items():
+            books = store.search_similar_books(query, k=config.top100_retrieval_k)
+            dim_lines = []
+            for b in books:
+                bid = b.get("id", "")
+                if bid in seen_ids:
+                    continue
+                seen_ids.add(bid)
+                meta = b.get("metadata", {})
+                dim_lines.append(
+                    f"    - 《{meta.get('title', '?')}》（{meta.get('author', '?')}）"
+                    f" 豆瓣{meta.get('douban_score', '?')}分"
+                )
+            if dim_lines:
+                lines.append(f"  【{dim_name}】参考：")
+                lines.extend(dim_lines)
+        return '\n'.join(lines) if lines else "（暂无参考数据，请依靠你的文学知识）"
 
     def _format_book_refs(self, books: list[dict]) -> str:
         if not books:

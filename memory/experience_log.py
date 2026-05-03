@@ -1,9 +1,10 @@
 """
-经验日志 —— 记录AI每次写作后的反思总结
-实现"边写边学"的核心组件
+经验日志 —— 提炼写作技法为独立卡片，按内容去重
+脱离章节绑定，重写不误判，越写越精
 """
 import json
 import os
+import hashlib
 import time
 from datetime import datetime
 from typing import Optional
@@ -13,7 +14,7 @@ from knowledge_base.vector_store import store
 
 
 class ExperienceLog:
-    """写作经验积累系统 —— 每次写作后自动复盘并存储技法"""
+    """写作经验积累系统 —— 每次写作后提炼技法卡片，去重存储"""
 
     def __init__(self, save_dir: Optional[str] = None):
         self.save_dir = save_dir or config.experience_dir
@@ -29,10 +30,11 @@ class ExperienceLog:
         architecture: dict,
         style_fingerprint: dict,
     ) -> dict:
-        """
-        自我反思循环：让AI总结本章的写作得失，
-        将成功经验存入向量库以供未来检索
-        """
+        """自我反思 → 提炼技法卡片 → 去重存入向量库"""
+
+        score = critique.get("overall_score", 0)
+        if isinstance(score, str):
+            score = 0
 
         # 1. 自我反思
         system = """你是一位善于反思的作家。请总结你刚写完的这一章中使用的写作技巧。
@@ -41,19 +43,16 @@ class ExperienceLog:
 {
   "techniques_used": [
     {
-      "name": "技法名称",
-      "description": "具体怎么用的",
-      "effectiveness": "效果如何（很好/一般/不理想）",
-      "from_which_book": "这个技法最初从哪本经典作品中学来（如果有的话）"
+      "name": "技法名称（简短，如：科学细节情节化）",
+      "description": "具体怎么用的（50-100字）",
+      "effectiveness": "很好 或 一般 或 不理想",
+      "category": "情节设计 或 语言风格 或 人物塑造 或 节奏控制 或 情感渲染 或 其他"
     }
   ],
-  "lessons_learned": "本章最大的教训或领悟",
-  "what_to_reuse": "哪些做法值得在后续章节中重复使用",
-  "what_to_avoid": "哪些做法应该避免",
-  "style_evolution": "与之前相比，写作风格有什么变化或进步",
-  "breakthrough_moment": "本章有没有灵感迸发的突破时刻？描述一下"
+  "lessons_learned": "本章最大的教训",
+  "what_to_avoid": "哪些做法应该避免"
 }
-"""
+只输出使用过的、具体的技法，不要空泛总结。"""
 
         user = f"""
 第{chapter_number}章《{chapter_title}》
@@ -66,88 +65,122 @@ class ExperienceLog:
 
 请反思总结：
 """
-
         reflection = llm.chat(system=system, user=user, temperature=0.6, max_tokens=2000)
         reflection_data = self._safe_json_parse(reflection)
 
-        # 2. 构建经验记录
-        experience = {
+        # 2. 提炼独立技法卡片，逐条去重写入
+        techniques = reflection_data.get("techniques_used", [])
+        if not isinstance(techniques, list):
+            techniques = []
+
+        saved_count = 0
+        for t in techniques:
+            if not isinstance(t, dict):
+                continue
+            name = t.get("name", "").strip()
+            desc = t.get("description", "").strip()
+            if not name or not desc:
+                continue
+
+            card = {
+                "id": self._hash_id(name, desc),
+                "type": "technique",
+                "name": name,
+                "description": desc,
+                "effectiveness": t.get("effectiveness", ""),
+                "category": t.get("category", ""),
+                "score": score,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            if self._exists(card["id"]):
+                continue
+
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(card, ensure_ascii=False) + "\n")
+
+            # 存入向量库
+            store.add_experience(
+                exp_id=card["id"],
+                experience={
+                    "type": "technique",
+                    "name": name,
+                    "description": desc,
+                    "category": t.get("category", ""),
+                    "effectiveness": t.get("effectiveness", ""),
+                    "score": score,
+                    "summary": desc,
+                    "technique": name,
+                    "lesson": reflection_data.get("lessons_learned", ""),
+                    "title": chapter_title,
+                },
+                embedding_text=f"{name} {desc} {t.get('category', '')} {t.get('effectiveness', '')}",
+            )
+            saved_count += 1
+
+        if saved_count > 0:
+            print(f"   ✓ 提炼{saved_count}条新技法（已去重）")
+
+        return {
             "timestamp": datetime.now().isoformat(),
-            "chapter_number": chapter_number,
-            "chapter_title": chapter_title,
-            "genre": architecture.get("genre", ""),
-            "critique_score": critique.get("overall_score", None),
             "reflection": reflection_data,
-            "style_snapshot": {
-                "total_chars": style_fingerprint.get("stats", {}).get("total_chars", 0),
-                "avg_sentence_length": style_fingerprint.get("stats", {}).get("avg_sentence_length", 0),
-                "dialogue_ratio": style_fingerprint.get("stats", {}).get("dialogue_ratio", 0),
-                "rhythm_type": style_fingerprint.get("rhythm", {}).get("rhythm_type", ""),
-            },
+            "techniques_saved": saved_count,
+            "score": score,
         }
 
-        # 3. 持久化：写入JSONL文件
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(experience, ensure_ascii=False) + "\n")
-
-        # 4. 索引化：存入向量库
-        embedding_text = self._build_embedding_text(experience)
-        store.add_experience(
-            exp_id=f"exp_ch{chapter_number}_{int(time.time())}",
-            experience={
-                "type": "writing_experience",
-                "chapter": chapter_number,
-                "title": chapter_title,
-                "score": critique.get("overall_score", 0),
-                "summary": reflection_data.get("what_to_reuse", ""),
-                "technique": json.dumps(reflection_data.get("techniques_used", []), ensure_ascii=False),
-                "lesson": reflection_data.get("lessons_learned", ""),
-            },
-            embedding_text=embedding_text,
-        )
-
-        return experience
-
     def get_evolution_report(self) -> str:
-        """生成写作进化报告"""
-        if not os.path.exists(self.log_file):
-            return "暂无写作记录，无法生成进化报告。"
+        """生成进化报告（统计技法卡片，非章节数）"""
+        cards = self._load_all()
+        if not cards:
+            return "暂无写作经验。写几章后会自动提炼技法。"
 
-        experiences = []
-        with open(self.log_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    experiences.append(json.loads(line))
+        scores = [c.get("score", 0) for c in cards if c.get("score")]
+        categories = {}
+        for c in cards:
+            cat = c.get("category", "其他")
+            categories[cat] = categories.get(cat, 0) + 1
 
-        if not experiences:
-            return "暂无写作记录。"
+        cat_str = " | ".join(f"{k}:{v}" for k, v in sorted(categories.items(), key=lambda x: -x[1]))
 
-        scores = [e.get("critique_score", 0) for e in experiences if e.get("critique_score")]
-        word_counts = [e.get("style_snapshot", {}).get("total_chars", 0) for e in experiences]
-
-        report = f"""
+        return f"""
 ╔══════════════════════════════════╗
 ║      📊 写作进化报告             ║
 ╠══════════════════════════════════╣
-║  总章节数：{len(experiences)}
-║  平均编辑评分：{sum(scores)/len(scores):.1f}/10（共{len(scores)}章有评分）
-║  评分趋势：{"↑ 上升" if len(scores) >= 2 and scores[-1] > scores[0] else "→ 稳定" if len(scores) >= 2 else "— 数据不足"}
-║  累计字数：{sum(word_counts)}
-║  平均每章字数：{sum(word_counts)//len(word_counts) if word_counts else 0}
+║  积累技法：{len(cards)} 条
+║  平均评分：{sum(scores)/len(scores):.1f}/10（共{len(scores)}条有评分）
+║  技法分布：{cat_str}
 ╚══════════════════════════════════╝
 """
-        return report
 
-    def _build_embedding_text(self, exp: dict) -> str:
-        reflection = exp.get("reflection", {})
-        parts = [
-            f"章节：第{exp.get('chapter_number', '?')}章 {exp.get('chapter_title', '')}",
-            f"评分：{exp.get('critique_score', '?')}/10",
-            f"心得：{reflection.get('lessons_learned', '')}",
-            f"可复用技巧：{reflection.get('what_to_reuse', '')}",
-            f"应避免：{reflection.get('what_to_avoid', '')}",
-        ]
-        return ' '.join(parts)
+    def count(self) -> int:
+        return len(self._load_all())
+
+    def _load_all(self) -> list[dict]:
+        if not os.path.exists(self.log_file):
+            return []
+        cards = []
+        with open(self.log_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        cards.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        return cards
+
+    def _exists(self, card_id: str) -> bool:
+        """快速检查ID是否已存在"""
+        if not os.path.exists(self.log_file):
+            return False
+        with open(self.log_file, "r", encoding="utf-8") as f:
+            return card_id in f.read()
+
+    @staticmethod
+    def _hash_id(name: str, description: str) -> str:
+        h = hashlib.md5(f"{name}|{description}".encode("utf-8")).hexdigest()[:10]
+        return f"tech_{h}"
+
+    # ==================== JSON 解析 ====================
 
     def _safe_json_parse(self, text: str) -> dict:
         text = text.strip()

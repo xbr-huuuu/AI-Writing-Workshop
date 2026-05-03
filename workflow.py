@@ -231,6 +231,9 @@ class WritingWorkflow:
         )
         print(f"   ✓ 经验已存入进化库")
 
+        # v2: 生成章节摘要（供后续章节引用，解决跨章联通问题）
+        chapter_summary = self._generate_summary(chapter_num, chapter_title, final_content)
+
         # 保存章节（先写正文文件，再更新元数据，防止崩了丢章节）
         chapter_record = {
             "number": chapter_num,
@@ -240,6 +243,7 @@ class WritingWorkflow:
             "architecture": architecture,
             "reflection": experience.get("reflection", {}),
             "timestamp": experience.get("timestamp", ""),
+            "summary": chapter_summary,
         }
         self.chapters.append(chapter_record)
         self._save_single_chapter(chapter_record)  # 先写正文到磁盘
@@ -261,21 +265,29 @@ class WritingWorkflow:
     # ==================== 辅助方法 ====================
 
     def _get_previous_summary(self) -> str:
-        """获取前几章的摘要（从章节文件读取正文）"""
+        """获取前情：最近2章给完整正文，其余给摘要，确保细节不丢+总量可控"""
         if not self.chapters:
             return "（这是第一章，无前情）"
 
         novel_dir = self._novel_dir()
-        recent = self.chapters[-3:]
-        lines = []
+        lines = ["【前情回顾】"]
+
+        # 倒数3章及以上：给摘要
+        older = self.chapters[:-2] if len(self.chapters) > 2 else []
+        for ch in older:
+            s = ch.get("summary", "")
+            if s:
+                lines.append(f"第{ch['number']}章《{ch['title']}》摘要：{s}")
+
+        # 最近2章：给完整正文
+        recent = self.chapters[-2:] if len(self.chapters) >= 2 else self.chapters
         for ch in recent:
-            filepath = os.path.join(novel_dir, f"chapter_{ch['number']:03d}.txt")
-            content = ""
-            if os.path.exists(filepath):
-                with open(filepath, "r", encoding="utf-8") as f:
-                    content = f.read()
-            content_preview = content[:200].replace('\n', ' ')
-            lines.append(f"第{ch['number']}章《{ch['title']}》：{content_preview}...")
+            content = ch.get("content", "")
+            if content:
+                lines.append(f"\n第{ch['number']}章《{ch['title']}》完整正文：\n{content}\n")
+            else:
+                lines.append(f"\n第{ch['number']}章《{ch['title']}》：（正文缺失）\n")
+
         return '\n'.join(lines)
 
     def _novel_dir(self) -> str:
@@ -314,6 +326,7 @@ class WritingWorkflow:
                 "title": ch["title"],
                 "critique_score": ch.get("critique_score"),
                 "timestamp": ch.get("timestamp", ""),
+                "summary": ch.get("summary", ""),
             }
             for ch in self.chapters
         ]
@@ -350,6 +363,17 @@ class WritingWorkflow:
         desc = climax.get("description", "")
         if desc:
             self.consistency.plant(chapter_num, f"高潮伏笔：{desc}")
+
+    def _generate_summary(self, chapter_num: int, title: str, content: str) -> str:
+        """生成单章摘要（~200字），包含关键事件、人物变化、未解伏笔"""
+        from agents.llm_client import llm as llm_client
+        text = content[:3000]  # 前3000字足够判断关键情节
+        system = "你是一位专业的小说编辑。请用200字以内总结本章的关键情节、人物变化和遗留伏笔。只输出摘要文本，不要其他内容。"
+        user = f"第{chapter_num}章《{title}》\n\n{text}\n\n请用200字以内总结本章："
+        try:
+            return llm_client.chat(system=system, user=user, temperature=0.3, max_tokens=400)
+        except Exception:
+            return ""
 
     def _safe_filename(self, name: str) -> str:
         """生成安全的文件名"""
